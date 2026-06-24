@@ -1,0 +1,13 @@
+{
+  "name": "@claude-at/gateway",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "@aws-sdk/client-ecs": "^3.700.0",
+    "@claude-at/shared": "*"
+  }
+}

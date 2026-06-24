@@ -1,0 +1,136 @@
+data "aws_iam_policy_document" "ecs_tasks_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+# ----------------------------------------------------------------------------
+# Execution role (shared by gateway + worker task defs)
+# ----------------------------------------------------------------------------
+resource "aws_iam_role" "execution" {
+  name               = "claude-at-execution"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "execution_managed" {
+  role       = aws_iam_role.execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# ----------------------------------------------------------------------------
+# Gateway task role
+# ----------------------------------------------------------------------------
+resource "aws_iam_role" "gateway_task" {
+  name               = "claude-at-gateway-task"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+}
+
+data "aws_iam_policy_document" "gateway_task" {
+  statement {
+    sid       = "RunWorkerTask"
+    effect    = "Allow"
+    actions   = ["ecs:RunTask"]
+    resources = ["arn:aws:ecs:${local.region}:${local.account_id}:task-definition/claude-at-worker:*"]
+  }
+
+  statement {
+    sid     = "PassTaskRoles"
+    effect  = "Allow"
+    actions = ["iam:PassRole"]
+    resources = [
+      aws_iam_role.execution.arn,
+      aws_iam_role.worker_task.arn,
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid    = "DynamoAccess"
+    effect = "Allow"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:Query",
+      "dynamodb:DeleteItem",
+    ]
+    resources = [local.table_arn]
+  }
+
+  statement {
+    sid       = "DiscordTokenSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [local.secret_discord_token_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "gateway_task" {
+  name   = "claude-at-gateway-task"
+  role   = aws_iam_role.gateway_task.id
+  policy = data.aws_iam_policy_document.gateway_task.json
+}
+
+# ----------------------------------------------------------------------------
+# Worker task role
+# ----------------------------------------------------------------------------
+resource "aws_iam_role" "worker_task" {
+  name               = "claude-at-worker-task"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+}
+
+data "aws_iam_policy_document" "worker_task" {
+  statement {
+    sid    = "BedrockInvoke"
+    effect = "Allow"
+    actions = [
+      "bedrock:InvokeModel",
+      "bedrock:InvokeModelWithResponseStream",
+    ]
+    resources = [
+      "arn:aws:bedrock:*::foundation-model/anthropic.*",
+      "arn:aws:bedrock:*:${local.account_id}:inference-profile/*",
+    ]
+  }
+
+  statement {
+    sid    = "DynamoAccess"
+    effect = "Allow"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:Query",
+      "dynamodb:DeleteItem",
+    ]
+    resources = [local.table_arn]
+  }
+
+  statement {
+    sid     = "Secrets"
+    effect  = "Allow"
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      local.secret_discord_token_arn,
+      local.secret_github_app_id_arn,
+      local.secret_github_key_arn,
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "worker_task" {
+  name   = "claude-at-worker-task"
+  role   = aws_iam_role.worker_task.id
+  policy = data.aws_iam_policy_document.worker_task.json
+}
