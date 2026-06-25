@@ -12,8 +12,10 @@ export interface JobRecord {
   repo?: string;
   resumeSessionId?: string;
   progressMessageId?: string;
+  taskArn?: string;
   resultSessionId?: string;
   costUsd?: number;
+  prUrl?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;

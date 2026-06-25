@@ -22,11 +22,14 @@ export const NAMES = {
 export const SECRET_IDS = {
   discordBotToken: "discord/agent-bot-token",
   discordWebhookUrl: "discord/agent-webhook-url",
-  githubAppId: "github/agent-app-id",
-  githubAppPrivateKey: "github/agent-app-private-key",
+  githubAppId: "claude-at/github-app-id",
+  githubAppPrivateKey: "claude-at/github-app-private-key",
 } as const;
 
 export const DEFAULT_REPO = process.env.DEFAULT_REPO ?? "";
+
+export const AUDIT_BUCKET = process.env.AUDIT_BUCKET ?? "";
+export const MEMORY_BUCKET = process.env.MEMORY_BUCKET ?? "";
 
 export function requireEnv(name: string): string {
   const v = process.env[name];

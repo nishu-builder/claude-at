@@ -29,3 +29,11 @@ output "ecr_worker_url" {
 output "dynamodb_table" {
   value = aws_dynamodb_table.this.name
 }
+
+output "audit_bucket" {
+  value = aws_s3_bucket.audit.bucket
+}
+
+output "memory_bucket" {
+  value = aws_s3_bucket.memory.bucket
+}

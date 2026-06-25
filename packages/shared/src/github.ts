@@ -35,8 +35,28 @@ export function authedCloneUrl(owner: string, repo: string, token: string): stri
   return `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
 }
 
+export async function createPullRequest(
+  owner: string,
+  repo: string,
+  token: string,
+  pr: { title: string; head: string; base: string; body?: string },
+): Promise<{ url: string; number: number }> {
+  const data = await gh(`/repos/${owner}/${repo}/pulls`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(pr),
+  });
+  return { url: data.html_url as string, number: data.number as number };
+}
+
 export function parseRepo(repo: string): { owner: string; name: string } {
   const [owner, name] = repo.split("/");
   if (!owner || !name) throw new Error(`invalid repo '${repo}', expected owner/name`);
   return { owner, name };
+}
+
+export function extractRepo(text: string): { repo?: string; rest: string } {
+  const m = text.match(/^\s*in\s+([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)[\s:]+([\s\S]*)$/i);
+  if (m && m[1]) return { repo: m[1], rest: (m[2] ?? "").trim() };
+  return { rest: text.trim() };
 }

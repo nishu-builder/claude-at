@@ -74,6 +74,13 @@ data "aws_iam_policy_document" "gateway_task" {
     actions   = ["secretsmanager:GetSecretValue"]
     resources = [local.secret_discord_token_arn]
   }
+
+  statement {
+    sid       = "StopWorkerTask"
+    effect    = "Allow"
+    actions   = ["ecs:StopTask"]
+    resources = ["arn:aws:ecs:${local.region}:${local.account_id}:task/claude-at/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "gateway_task" {
@@ -126,6 +133,30 @@ data "aws_iam_policy_document" "worker_task" {
       local.secret_github_app_id_arn,
       local.secret_github_key_arn,
     ]
+  }
+
+  statement {
+    sid       = "AuditWriteOnly"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.audit.arn}/*"]
+  }
+
+  statement {
+    sid    = "MemoryReadWrite"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+    ]
+    resources = ["${aws_s3_bucket.memory.arn}/*"]
+  }
+
+  statement {
+    sid       = "MemoryList"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.memory.arn]
   }
 }
 

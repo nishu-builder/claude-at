@@ -11,6 +11,7 @@ export interface ClaudeCallbacks {
   onSession?: (id: string) => void;
   onActivity?: (line: string) => void;
   onResult?: (result: ClaudeResult) => void;
+  onEvent?: (evt: unknown) => void;
 }
 
 export interface RunClaudeOptions {
@@ -118,6 +119,7 @@ export function runClaude(opts: RunClaudeOptions): Promise<ClaudeResult> {
         } catch {
           continue;
         }
+        cb.onEvent?.(parsed);
         const r = handleEvent(parsed, cb);
         if (r) finalResult = r;
       }

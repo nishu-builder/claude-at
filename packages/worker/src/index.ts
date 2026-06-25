@@ -6,17 +6,22 @@ import {
   REGION,
   MODEL,
   SECRET_IDS,
+  AUDIT_BUCKET,
+  MEMORY_BUCKET,
   requireEnv,
   getJob,
   updateJob,
   updateThread,
   getSecret,
+  getObjectText,
+  putObjectText,
   Discord,
   installationToken,
   authedCloneUrl,
   parseRepo,
+  createPullRequest,
 } from "@claude-at/shared";
-import { runClaude } from "./claude";
+import { runClaude, type ClaudeResult } from "./claude";
 
 function chunk(text: string, size: number): string[] {
   const out: string[] = [];
@@ -45,6 +50,27 @@ function run(cmd: string, args: string[]): Promise<void> {
   });
 }
 
+function gitOut(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", args, { cwd });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d: string) => {
+      stdout += d;
+    });
+    child.stderr.on("data", (d: string) => {
+      stderr += d;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr.trim()));
+    });
+  });
+}
+
 async function main(): Promise<void> {
   const jobId = requireEnv("JOB_ID");
   const job = await getJob(jobId);
@@ -62,14 +88,62 @@ async function main(): Promise<void> {
   const progressMessageId = msg.id;
   await updateJob(jobId, { progressMessageId });
 
+  const repo = job.repo;
+  const memKey = `${job.threadId}/memory.md`;
+  let memory: string | undefined;
   try {
-    const repo = job.repo;
+    if (MEMORY_BUCKET) memory = await getObjectText(MEMORY_BUCKET, memKey);
+  } catch (e) {
+    console.error("memory read failed (continuing without memory)", e);
+  }
+  const effectivePrompt = memory
+    ? `You are continuing work in a Discord thread. Accumulated context from earlier in this thread:\n\n<thread_memory>\n${memory}\n</thread_memory>\n\nNow handle this new request:\n${job.prompt}`
+    : job.prompt;
+
+  const events: unknown[] = [];
+  const startedAt = new Date().toISOString();
+
+  const writeAudit = async (result: ClaudeResult | undefined): Promise<void> => {
+    if (!AUDIT_BUCKET) return;
+    const key = `${new Date().toISOString().slice(0, 10)}/${jobId}.json`;
+    const audit = {
+      jobId,
+      threadId: job.threadId,
+      channelId: job.channelId,
+      guildId: job.guildId,
+      userId: job.userId,
+      repo: job.repo ?? null,
+      prompt: job.prompt,
+      effectivePrompt,
+      model: MODEL.main,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      result: {
+        text: result?.text,
+        costUsd: result?.costUsd,
+        sessionId: result?.sessionId,
+        isError: result?.isError,
+      },
+      events,
+    };
+    try {
+      await putObjectText(AUDIT_BUCKET, key, JSON.stringify(audit, null, 2), "application/json");
+    } catch (e) {
+      console.error("audit write failed", e);
+    }
+  };
+
+  let ghToken: string | undefined;
+  let defaultBranch: string | undefined;
+
+  try {
     let cwd: string;
     if (repo) {
       const { owner, name } = parseRepo(repo);
-      const ghToken = await installationToken(owner, name);
+      ghToken = await installationToken(owner, name);
       cwd = await mkdtemp(join(tmpdir(), "claude-at-"));
       await run("git", ["clone", "--depth", "1", authedCloneUrl(owner, name, ghToken), cwd]);
+      defaultBranch = (await gitOut(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
     } else {
       cwd = await mkdtemp(join(tmpdir(), "claude-at-"));
     }
@@ -84,12 +158,11 @@ async function main(): Promise<void> {
       void discord.editMessage(job.threadId, progressMessageId, next).catch(() => {});
     }, 1500);
 
-    let result;
+    let result: ClaudeResult;
     try {
       result = await runClaude({
-        prompt: job.prompt,
+        prompt: effectivePrompt,
         cwd,
-        resume: process.env.ENABLE_RESUME === "1" ? job.resumeSessionId : undefined,
         env: {
           CLAUDE_CODE_USE_BEDROCK: "1",
           AWS_REGION: REGION,
@@ -97,6 +170,9 @@ async function main(): Promise<void> {
           ANTHROPIC_SMALL_FAST_MODEL: MODEL.smallFast,
         },
         callbacks: {
+          onEvent: (evt) => {
+            events.push(evt);
+          },
           onSession: (id) => {
             latestActivity = `🟢 session ${id.slice(0, 8)}`;
           },
@@ -119,6 +195,61 @@ async function main(): Promise<void> {
     });
     await updateThread(job.threadId, { claudeSessionId: sessionId, repo });
 
+    if (!isError && MEMORY_BUCKET) {
+      const entry = `\n\n## ${new Date().toISOString()}\n**Request:** ${job.prompt}\n**Response:** ${result.text.slice(0, 1500)}`;
+      const base = memory ?? "# Thread memory\n";
+      let next = base + entry;
+      if (next.length > 12000) next = "# Thread memory (older entries trimmed)\n" + next.slice(-12000);
+      await putObjectText(MEMORY_BUCKET, memKey, next, "text/markdown");
+    }
+
+    await writeAudit(result);
+
+    if (repo && ghToken && defaultBranch && !isError) {
+      try {
+        const dirty = (await gitOut(cwd, ["status", "--porcelain"])).trim();
+        if (dirty) {
+          await gitOut(cwd, ["add", "-A"]);
+          await gitOut(cwd, [
+            "-c",
+            "user.name=claude-at",
+            "-c",
+            "user.email=claude-at[bot]@users.noreply.github.com",
+            "commit",
+            "-m",
+            `claude-at: ${job.prompt.slice(0, 60)}`,
+          ]);
+        }
+        const ahead = parseInt(
+          (await gitOut(cwd, ["rev-list", "--count", `origin/${defaultBranch}..HEAD`])).trim() || "0",
+          10,
+        );
+        if (ahead > 0) {
+          const branch = `claude-at/${jobId.slice(0, 8)}`;
+          await gitOut(cwd, ["branch", branch]);
+          await gitOut(cwd, ["push", "origin", branch]);
+          const { owner, name } = parseRepo(repo);
+          const pr = await createPullRequest(owner, name, ghToken, {
+            title: job.prompt.slice(0, 72) || "claude-at changes",
+            head: branch,
+            base: defaultBranch,
+            body: `Requested in Discord by <@${job.userId}>.\n\n> ${job.prompt}\n\n---\n\n${result.text.slice(0, 1500)}\n\n🤖 Generated by claude-at`,
+          });
+          await updateJob(jobId, { prUrl: pr.url });
+          await discord.createMessage(job.threadId, `📬 Opened PR: ${pr.url}`);
+        }
+      } catch (e) {
+        await discord
+          .createMessage(job.threadId, `⚠️ Made changes but couldn't open a PR: ${String(e)}`)
+          .catch(() => {});
+        const diff = await gitOut(cwd, ["diff", `origin/${defaultBranch}`]).catch(() => "");
+        if (diff)
+          await discord
+            .createMessage(job.threadId, "```diff\n" + diff.slice(0, 1800) + "\n```")
+            .catch(() => {});
+      }
+    }
+
     const finalLine = isError ? "🔴 Failed" : `✅ Done (${costUsd ? "$" + costUsd.toFixed(2) : ""})`;
     await discord.editMessage(job.threadId, progressMessageId, finalLine);
 
@@ -133,6 +264,7 @@ async function main(): Promise<void> {
 
     process.exit(0);
   } catch (err) {
+    await writeAudit({ text: String(err), costUsd: undefined, sessionId: undefined, isError: true });
     await updateJob(jobId, { status: "failed", error: String(err) }).catch(() => {});
     await discord.createMessage(job.threadId, "🔴 Error: " + String(err)).catch(() => {});
     process.exit(1);

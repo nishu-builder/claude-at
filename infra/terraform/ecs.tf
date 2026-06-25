@@ -26,6 +26,8 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "ANTHROPIC_SMALL_FAST_MODEL", value = "us.anthropic.claude-haiku-4-5-20251001-v1:0" },
         { name = "DDB_TABLE", value = aws_dynamodb_table.this.name },
         { name = "DEFAULT_REPO", value = var.default_repo },
+        { name = "AUDIT_BUCKET", value = aws_s3_bucket.audit.bucket },
+        { name = "MEMORY_BUCKET", value = aws_s3_bucket.memory.bucket },
       ]
       logConfiguration = {
         logDriver = "awslogs"
