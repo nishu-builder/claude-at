@@ -184,6 +184,8 @@ async function processJob(job: JobRecord): Promise<void> {
     ? `You are continuing work in a Discord thread. Accumulated context from earlier in this thread:\n\n<thread_memory>\n${memory}\n</thread_memory>\n\nNow handle this new request:\n${job.prompt}`
     : job.prompt;
 
+  effectivePrompt += `\n\n---\nYou are working inside a Debian Linux container with passwordless \`sudo\`. If a task needs a tool that is not installed (Python, a compiler, a CLI, system libraries), install it yourself rather than giving up — e.g. \`sudo apt-get update && sudo apt-get install -y <pkg>\`, \`uv pip install <pkg>\`, \`pip3 install --break-system-packages <pkg>\`, or \`npm i -g <pkg>\`. Only proprietary software or licensed data you cannot fetch is genuinely off-limits; if you hit that, say so plainly and do as much as you can without it.`;
+
   const events: unknown[] = [];
   const startedAt = new Date().toISOString();
 
