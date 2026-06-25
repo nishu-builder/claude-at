@@ -40,6 +40,7 @@ the bot token, and invite the bot to your server.
    - Send Messages in Threads
    - Read Message History
    - Embed Links
+   - Manage Webhooks — optional; enables per-identity message avatars (README → Identities). Without it the bot falls back to a `[name]` text prefix.
 4. Copy the generated URL at the bottom, open it in a browser, choose the target server, and authorize.
 
 ## Notes

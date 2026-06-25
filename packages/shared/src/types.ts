@@ -7,6 +7,7 @@ export interface JobRecord {
   prompt: string;
   guildId: string;
   channelId: string;
+  parentChannelId?: string;
   threadId: string;
   userId: string;
   identityId?: string;
@@ -38,6 +39,7 @@ export interface Identity {
   id: string;
   displayName: string;
   persona: string;
+  avatarUrl?: string;
   defaultRepo?: string;
   allowedRepos?: string[];
   allowedTools?: string[];

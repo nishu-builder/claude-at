@@ -8,7 +8,7 @@
 //
 // Usage:
 //   AWS_PROFILE=sandbox-admin node scripts/identity.mjs create --id <id> --name <displayName> \
-//     [--persona <text>] [--repo <owner/name>] [--repos <a,b>] [--tools <Bash,Edit>] [--memory-ns <ns>]
+//     [--persona <text>] [--avatar <url>] [--repo <owner/name>] [--repos <a,b>] [--tools <Bash,Edit>] [--memory-ns <ns>]
 //   AWS_PROFILE=sandbox-admin node scripts/identity.mjs list
 //   AWS_PROFILE=sandbox-admin node scripts/identity.mjs bind --channel <channelId> --identity <id>
 
@@ -33,6 +33,7 @@ create options:
   --id <id>             identity id (required)
   --name <displayName>  display name (required)
   --persona <text>      system prompt appended for this identity (default "")
+  --avatar <url>        avatar image URL shown per message (needs Manage Webhooks)
   --repo <owner/name>   default repo used when a mention names none
   --repos <a,b,c>       comma-separated allowed repos
   --tools <Bash,Edit>   comma-separated allowed tools (restricts the worker)
@@ -80,6 +81,7 @@ async function create(flags) {
     createdAt: now,
     updatedAt: now,
   };
+  if (flags.avatar) item.avatarUrl = flags.avatar;
   if (flags.repo) item.defaultRepo = flags.repo;
   if (flags.repos) item.allowedRepos = splitList(flags.repos);
   if (flags.tools) item.allowedTools = splitList(flags.tools);

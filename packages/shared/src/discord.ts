@@ -54,4 +54,60 @@ export class Discord {
       auto_archive_duration: 1440,
     });
   }
+
+  listChannelWebhooks(channelId: string): Promise<Webhook[]> {
+    return this.req("GET", `/channels/${channelId}/webhooks`);
+  }
+
+  createWebhook(channelId: string, name: string): Promise<Webhook> {
+    return this.req("POST", `/channels/${channelId}/webhooks`, { name: truncate(name, 80) });
+  }
+
+  // Find an existing claude-at webhook on the channel, or create one. Webhooks
+  // live on the parent text channel; a message is delivered into a thread via
+  // the `thread_id` query param at execute time.
+  async ensureWebhook(channelId: string, name = "claude-at"): Promise<Webhook> {
+    const hooks = await this.listChannelWebhooks(channelId);
+    const mine = hooks.find((h) => h.name === name && h.token);
+    return mine ?? (await this.createWebhook(channelId, name));
+  }
+
+  // Post as a per-message identity (custom username + avatar). Unlike editing
+  // the bot's own profile, each execute call carries its own username/avatar,
+  // so previously posted messages are never retroactively changed. `threadId`
+  // routes the message into a thread under the webhook's parent channel. With
+  // `wait` the created message is returned (so it can later be edited).
+  async executeWebhook(
+    webhook: Webhook,
+    opts: { content: string; username?: string; avatarUrl?: string; threadId?: string; wait?: boolean },
+  ): Promise<{ id: string } | null> {
+    const params = new URLSearchParams();
+    if (opts.wait) params.set("wait", "true");
+    if (opts.threadId) params.set("thread_id", opts.threadId);
+    const qs = params.toString() ? `?${params}` : "";
+    return this.req("POST", `/webhooks/${webhook.id}/${webhook.token}${qs}`, {
+      content: truncate(opts.content),
+      username: opts.username,
+      avatar_url: opts.avatarUrl,
+    });
+  }
+
+  editWebhookMessage(
+    webhook: Webhook,
+    messageId: string,
+    content: string,
+    threadId?: string,
+  ): Promise<{ id: string }> {
+    const qs = threadId ? `?thread_id=${threadId}` : "";
+    return this.req("PATCH", `/webhooks/${webhook.id}/${webhook.token}/messages/${messageId}${qs}`, {
+      content: truncate(content),
+    });
+  }
+}
+
+export interface Webhook {
+  id: string;
+  token?: string;
+  name?: string;
+  channel_id?: string;
 }

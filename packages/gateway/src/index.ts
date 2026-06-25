@@ -58,6 +58,7 @@ const COMMANDS = [
       { name: "id", description: "short id, e.g. eng", type: 3, required: true },
       { name: "name", description: "display name", type: 3, required: true },
       { name: "persona", description: "system prompt / persona", type: 3, required: false },
+      { name: "avatar", description: "avatar image URL shown per message", type: 3, required: false },
       { name: "repo", description: "default repo owner/name", type: 3, required: false },
       { name: "memory_ns", description: "memory namespace (defaults to id)", type: 3, required: false },
     ],
@@ -161,6 +162,7 @@ client.on("messageCreate", async (message: Message) => {
       prompt: rest,
       guildId: message.guildId ?? "",
       channelId: message.channelId,
+      parentChannelId: bindChannelId,
       threadId,
       userId: message.author.id,
       identityId: identity.id,
@@ -267,6 +269,7 @@ async function handleCreateIdentity(interaction: ChatInputCommandInteraction): P
   const id = interaction.options.getString("id", true);
   const name = interaction.options.getString("name", true);
   const persona = interaction.options.getString("persona");
+  const avatar = interaction.options.getString("avatar");
   const repo = interaction.options.getString("repo");
   const memoryNs = interaction.options.getString("memory_ns");
   const now = new Date().toISOString();
@@ -275,6 +278,7 @@ async function handleCreateIdentity(interaction: ChatInputCommandInteraction): P
     id,
     displayName: name,
     persona: persona ?? "",
+    avatarUrl: avatar || undefined,
     defaultRepo: repo || undefined,
     memoryNs: memoryNs || id,
     createdAt: now,
