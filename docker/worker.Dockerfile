@@ -1,3 +1,30 @@
+# syntax=docker/dockerfile:1
+
+# ── Builder ───────────────────────────────────────────────────────────────
+# Install workspace deps and bundle the worker (+ its prod deps) into a single
+# JS file with esbuild. Nothing from this stage ships except that bundle, so
+# tsx/typescript/discord.js and the rest of node_modules stay out of runtime.
+FROM node:22-slim AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/gateway/package.json packages/gateway/package.json
+COPY packages/worker/package.json packages/worker/package.json
+RUN npm install
+
+COPY . .
+
+# Bundle to ESM, targeting the runtime node. The createRequire banner lets any
+# CommonJS-only transitive dep (AWS SDK internals) resolve require() under ESM.
+RUN npx --yes esbuild@0.28.1 packages/worker/src/index.ts \
+    --bundle --platform=node --format=esm --target=node22 \
+    --banner:js="import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);" \
+    --outfile=dist/worker.mjs \
+    && node --check dist/worker.mjs
+
+# ── Runtime ───────────────────────────────────────────────────────────────
 FROM node:22-slim
 
 # OS deps: git (clone), ca-certificates (TLS), ripgrep (search),
@@ -17,21 +44,12 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.190 \
 
 WORKDIR /app
 
-# Copy manifests first for dependency-layer caching. Lockfile optional (glob).
-COPY package.json package-lock.json* ./
-COPY packages/shared/package.json packages/shared/package.json
-COPY packages/gateway/package.json packages/gateway/package.json
-COPY packages/worker/package.json packages/worker/package.json
-
-# Full install (NOT --production): we run via tsx, which is a devDependency.
-RUN npm install
-
-# Copy the rest of the repo (app source, tsconfigs, etc.)
-COPY . .
+# The whole worker is a single bundled file — no node_modules at runtime.
+COPY --from=builder /app/dist/worker.mjs ./worker.mjs
 
 # Run as the unprivileged `node` user: Claude Code refuses
 # --dangerously-skip-permissions as root. The `node` user (uid 1000) ships with
-# the base image. Own /app and the config dir so tsx + claude can write.
+# the base image. Own /app and the config dir so node + claude can write.
 ENV HOME=/home/node \
     CLAUDE_CONFIG_DIR=/home/node/.claude
 RUN mkdir -p /home/node/.claude && chown -R node:node /app /home/node
@@ -46,4 +64,4 @@ ENV CLAUDE_CODE_USE_BEDROCK=1 \
 
 USER node
 
-CMD ["npx", "tsx", "packages/worker/src/index.ts"]
+CMD ["node", "worker.mjs"]
