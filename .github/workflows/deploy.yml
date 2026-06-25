@@ -1,0 +1,60 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+      - run: npx tsc -p tsconfig.json --noEmit
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push images
+        env:
+          REG: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build --platform linux/amd64 -f docker/worker.Dockerfile -t "$REG/claude-at/worker:latest" .
+          docker push "$REG/claude-at/worker:latest"
+          docker build --platform linux/amd64 -f docker/gateway.Dockerfile -t "$REG/claude-at/gateway:latest" .
+          docker push "$REG/claude-at/gateway:latest"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform apply
+        working-directory: infra/terraform
+        run: |
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          terraform init -input=false -backend-config="bucket=claude-at-tfstate-${ACCOUNT}"
+          terraform apply -auto-approve -input=false -var 'profile='
+
+      - name: Roll services onto the new images
+        run: |
+          aws ecs update-service --cluster claude-at --service claude-at-gateway --force-new-deployment >/dev/null
+          aws ecs update-service --cluster claude-at --service claude-at-worker --force-new-deployment >/dev/null
