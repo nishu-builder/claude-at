@@ -137,6 +137,15 @@ data "aws_iam_policy_document" "worker_task" {
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.memory.arn]
   }
+
+  # The reaper sweeps for jobs left `running` by dead workers; it needs to ask
+  # ECS which task ARNs are still alive. DescribeTasks isn't resource-scopable.
+  statement {
+    sid       = "DescribeTasksForReaper"
+    effect    = "Allow"
+    actions   = ["ecs:DescribeTasks"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "worker_task" {

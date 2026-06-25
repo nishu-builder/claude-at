@@ -114,18 +114,77 @@ export async function listQueuedJobs(): Promise<JobRecord[]> {
   return (r.Items ?? []) as JobRecord[];
 }
 
-export async function claimJob(jobId: string, taskArn?: string): Promise<boolean> {
+export async function listRunningJobs(): Promise<JobRecord[]> {
+  const r = await doc.send(
+    new ScanCommand({
+      TableName: TABLE,
+      FilterExpression: "#s = :r AND begins_with(pk, :j)",
+      ExpressionAttributeNames: { "#s": "status" },
+      ExpressionAttributeValues: { ":r": "running", ":j": "JOB#" },
+    }),
+  );
+  return (r.Items ?? []) as JobRecord[];
+}
+
+// Atomically move a job out of `running` only if it's still running on the
+// same worker we observed as dead. The condition guards against a race where
+// the job finished (or was reclaimed) between the reaper's scan and write.
+export async function reapJob(
+  jobId: string,
+  taskArn: string,
+  next: { status: "queued" } | { status: "failed"; error: string },
+): Promise<boolean> {
+  const values: Record<string, unknown> = {
+    ":n": next.status,
+    ":r": "running",
+    ":t": taskArn,
+    ":u": new Date().toISOString(),
+  };
+  let setExpr = "SET #s = :n, updatedAt = :u REMOVE taskArn";
+  if (next.status === "failed") {
+    values[":e"] = next.error;
+    setExpr = "SET #s = :n, error = :e, updatedAt = :u REMOVE taskArn";
+  }
   try {
     await doc.send(
       new UpdateCommand({
         TableName: TABLE,
         Key: { pk: jobPk(jobId) },
-        UpdateExpression: taskArn ? "SET #s = :r, taskArn = :t, updatedAt = :u" : "SET #s = :r, updatedAt = :u",
+        UpdateExpression: setExpr,
+        ConditionExpression: "#s = :r AND taskArn = :t",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: values,
+      }),
+    );
+    return true;
+  } catch (e) {
+    if ((e as { name?: string }).name === "ConditionalCheckFailedException") return false;
+    throw e;
+  }
+}
+
+export async function claimJob(jobId: string, taskArn?: string): Promise<boolean> {
+  const values: Record<string, unknown> = {
+    ":r": "running",
+    ":q": "queued",
+    ":u": new Date().toISOString(),
+    ":one": 1,
+    ":zero": 0,
+  };
+  let setExpr = "SET #s = :r, updatedAt = :u, attempts = if_not_exists(attempts, :zero) + :one";
+  if (taskArn) {
+    values[":t"] = taskArn;
+    setExpr = "SET #s = :r, taskArn = :t, updatedAt = :u, attempts = if_not_exists(attempts, :zero) + :one";
+  }
+  try {
+    await doc.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { pk: jobPk(jobId) },
+        UpdateExpression: setExpr,
         ConditionExpression: "#s = :q",
         ExpressionAttributeNames: { "#s": "status" },
-        ExpressionAttributeValues: taskArn
-          ? { ":r": "running", ":q": "queued", ":t": taskArn, ":u": new Date().toISOString() }
-          : { ":r": "running", ":q": "queued", ":u": new Date().toISOString() },
+        ExpressionAttributeValues: values,
       }),
     );
     return true;

@@ -26,6 +26,7 @@ import {
   type JobRecord,
 } from "@claude-at/shared";
 import { runClaude, type ClaudeResult } from "./claude";
+import { startReaper } from "./reaper";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -318,6 +319,7 @@ async function main(): Promise<void> {
   }
 
   console.log("worker pool ready — polling");
+  startReaper();
   for (;;) {
     try {
       const jobs = await listQueuedJobs();
