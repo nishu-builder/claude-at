@@ -41,6 +41,7 @@ data "aws_iam_policy_document" "gateway_task" {
       "dynamodb:UpdateItem",
       "dynamodb:Query",
       "dynamodb:DeleteItem",
+      "dynamodb:Scan",
     ]
     resources = [local.table_arn]
   }
