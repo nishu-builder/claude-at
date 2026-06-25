@@ -1,8 +1,14 @@
 FROM node:22-slim
 
-# OS deps: git (clone), ca-certificates (TLS), ripgrep (Claude Code search).
+# OS deps: git (clone), ca-certificates (TLS), ripgrep (search),
+# gh (so the agent can read GitHub issues/PRs itself via GH_TOKEN), curl/gnupg (gh apt repo).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates ripgrep \
+    && apt-get install -y --no-install-recommends git ca-certificates ripgrep curl gnupg \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code CLI globally and verify the `claude` binary is on PATH.
