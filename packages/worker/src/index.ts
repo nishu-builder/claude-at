@@ -186,6 +186,24 @@ async function processJob(job: JobRecord): Promise<void> {
 
   effectivePrompt += `\n\n---\nYou are working inside a Debian Linux container with passwordless \`sudo\`. If a task needs a tool that is not installed (Python, a compiler, a CLI, system libraries), install it yourself rather than giving up — e.g. \`sudo apt-get update && sudo apt-get install -y <pkg>\`, \`uv pip install <pkg>\`, \`pip3 install --break-system-packages <pkg>\`, or \`npm i -g <pkg>\`. Only proprietary software or licensed data you cannot fetch is genuinely off-limits; if you hit that, say so plainly and do as much as you can without it.`;
 
+  // Thread memory is written incrementally: an in-progress entry now, rewritten
+  // with the outcome on success or failure. Both writes derive from the same
+  // base snapshot, so the final one replaces the in-progress entry. Per-thread
+  // serialization in the gateway keeps these single-object writes race-free.
+  const memBase = memory ?? "# Thread memory\n";
+  const memTs = new Date().toISOString();
+  const writeMemory = async (outcome: string): Promise<void> => {
+    if (!MEMORY_BUCKET) return;
+    let next = `${memBase}\n\n## ${memTs}\n**Request:** ${job.prompt}${outcome}`;
+    if (next.length > 12000) next = "# Thread memory (older entries trimmed)\n" + next.slice(-12000);
+    try {
+      await putObjectText(MEMORY_BUCKET, memKey, next, "text/markdown");
+    } catch (e) {
+      console.error("memory write failed", e);
+    }
+  };
+  await writeMemory("\n**Status:** ⏳ working…");
+
   const events: unknown[] = [];
   const startedAt = new Date().toISOString();
 
@@ -291,13 +309,9 @@ async function processJob(job: JobRecord): Promise<void> {
     });
     await updateThread(job.threadId, { claudeSessionId: sessionId, repo });
 
-    if (!isError && MEMORY_BUCKET) {
-      const entry = `\n\n## ${new Date().toISOString()}\n**Request:** ${job.prompt}\n**Response:** ${cleanText.slice(0, 1500)}`;
-      const base = memory ?? "# Thread memory\n";
-      let next = base + entry;
-      if (next.length > 12000) next = "# Thread memory (older entries trimmed)\n" + next.slice(-12000);
-      await putObjectText(MEMORY_BUCKET, memKey, next, "text/markdown");
-    }
+    await writeMemory(
+      isError ? `\n**Failed:** ${(text || "claude error").slice(0, 500)}` : `\n**Response:** ${cleanText.slice(0, 1500)}`,
+    );
 
     await writeAudit(result);
 
@@ -357,6 +371,7 @@ async function processJob(job: JobRecord): Promise<void> {
   } catch (err) {
     await writeAudit({ text: String(err), costUsd: undefined, sessionId: undefined, isError: true });
     await updateJob(jobId, { status: "failed", error: String(err) }).catch(() => {});
+    await writeMemory(`\n**Failed:** ${String(err).slice(0, 500)}`);
     await poster.create("🔴 Error: " + String(err)).catch(() => {});
     return;
   } finally {
