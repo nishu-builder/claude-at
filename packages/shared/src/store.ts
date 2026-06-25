@@ -1,7 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { REGION, NAMES } from "./config";
-import type { JobRecord, ThreadRecord } from "./types";
+import type { JobRecord, ThreadRecord, Identity, ChannelBinding } from "./types";
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }), {
   marshallOptions: { removeUndefinedValues: true },
@@ -57,4 +57,47 @@ export async function putThread(rec: ThreadRecord): Promise<void> {
 
 export async function updateThread(threadId: string, patch: Partial<ThreadRecord>): Promise<void> {
   await patchItem(threadPk(threadId), { ...patch, updatedAt: new Date().toISOString() });
+}
+
+export const identityPk = (id: string): string => `IDENTITY#${id}`;
+export const channelPk = (id: string): string => `CHANNEL#${id}`;
+
+export async function getIdentity(id: string): Promise<Identity | undefined> {
+  const r = await doc.send(new GetCommand({ TableName: TABLE, Key: { pk: identityPk(id) } }));
+  return r.Item as Identity | undefined;
+}
+
+export async function putIdentity(identity: Identity): Promise<void> {
+  await doc.send(new PutCommand({ TableName: TABLE, Item: identity }));
+}
+
+export async function listIdentities(): Promise<Identity[]> {
+  const r = await doc.send(
+    new ScanCommand({
+      TableName: TABLE,
+      FilterExpression: "begins_with(pk, :p)",
+      ExpressionAttributeValues: { ":p": "IDENTITY#" },
+    }),
+  );
+  return (r.Items ?? []) as Identity[];
+}
+
+export async function getIdentityOrDefault(id: string): Promise<Identity> {
+  const found = await getIdentity(id);
+  if (found) return found;
+  return { pk: identityPk(id), id, displayName: "ClaudeTag", persona: "", memoryNs: id, createdAt: "", updatedAt: "" };
+}
+
+export async function getChannelBinding(channelId: string): Promise<ChannelBinding | undefined> {
+  const r = await doc.send(new GetCommand({ TableName: TABLE, Key: { pk: channelPk(channelId) } }));
+  return r.Item as ChannelBinding | undefined;
+}
+
+export async function putChannelBinding(channelId: string, identityId: string): Promise<void> {
+  await doc.send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: { pk: channelPk(channelId), channelId, identityId, updatedAt: new Date().toISOString() },
+    }),
+  );
 }

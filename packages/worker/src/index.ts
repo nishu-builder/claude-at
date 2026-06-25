@@ -20,6 +20,8 @@ import {
   authedCloneUrl,
   parseRepo,
   createPullRequest,
+  getIdentityOrDefault,
+  DEFAULT_IDENTITY_ID,
 } from "@claude-at/shared";
 import { runClaude, type ClaudeResult } from "./claude";
 
@@ -81,18 +83,20 @@ async function main(): Promise<void> {
 
   await updateJob(jobId, { status: "running" });
 
+  const identity = await getIdentityOrDefault(job.identityId ?? DEFAULT_IDENTITY_ID);
+
   const token = await getSecret(SECRET_IDS.discordBotToken);
   const discord = new Discord(token);
 
   const introText = job.repo
-    ? `🧠 Working in \`${job.repo}\`…`
-    : "🧠 Thinking… (no repo attached — mention me with `in owner/repo:` to target one)";
+    ? `🧠 **${identity.displayName}** working in \`${job.repo}\`…`
+    : `🧠 **${identity.displayName}** thinking… (no repo attached)`;
   const msg = await discord.createMessage(job.threadId, introText);
   const progressMessageId = msg.id;
   await updateJob(jobId, { progressMessageId });
 
   const repo = job.repo;
-  const memKey = `${job.threadId}/memory.md`;
+  const memKey = `${identity.memoryNs}/${job.threadId}/memory.md`;
   let memory: string | undefined;
   try {
     if (MEMORY_BUCKET) memory = await getObjectText(MEMORY_BUCKET, memKey);
@@ -166,6 +170,8 @@ async function main(): Promise<void> {
       result = await runClaude({
         prompt: effectivePrompt,
         cwd,
+        appendSystemPrompt: identity.persona || undefined,
+        allowedTools: identity.allowedTools,
         env: {
           CLAUDE_CODE_USE_BEDROCK: "1",
           AWS_REGION: REGION,

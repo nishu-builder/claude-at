@@ -32,7 +32,7 @@ Bedrock — there is no Anthropic API key anywhere.
 | `packages/worker` | Clone repo → headless Claude on Bedrock → stream to thread |
 | `docker/` | Gateway + worker Dockerfiles (worker runs non-root) |
 | `infra/terraform/` | ECR, ECS, DynamoDB, IAM, logs, security group, task defs, service |
-| `scripts/` | `store-secret.sh`, `build-and-push.sh`, Discord bot runbook |
+| `scripts/` | `store-secret.sh`, `build-and-push.sh`, `identity.mjs` (manage identities), Discord bot runbook |
 | `PLAN.md` | Full design doc |
 
 TypeScript monorepo (npm workspaces), run with [`tsx`](https://tsx.is) — no build step.
@@ -71,6 +71,57 @@ Then invite the bot to your server and `@Claude <task>` in a channel.
 
 See [`scripts/setup-discord-bot.md`](scripts/setup-discord-bot.md) for the full bot runbook
 and [`PLAN.md`](PLAN.md) for the architecture and the phased roadmap.
+
+## Identities
+
+An **identity** is a reusable agent configuration — **persona** (system prompt) +
+**tools** (allowed tools) + **data** (default repo and allowed repos) + an **isolated
+memory** namespace. Identities are **admin-managed**, mirroring Anthropic's Claude Tag
+model: an admin defines who the agent is, and channels are bound to it. Identities live in
+the same `claude-at` DynamoDB table as jobs and threads.
+
+The worker applies an identity by injecting its `persona` via `--append-system-prompt`,
+restricting tools via `--allowedTools` when `allowedTools` is set, and namespacing memory
+by `memoryNs`.
+
+**Create one** (admin, with AWS creds):
+
+```sh
+AWS_PROFILE=sandbox-admin node scripts/identity.mjs create \
+  --id eng --name "Eng Claude" \
+  --repo nishu-builder/claude-at \
+  --persona "You are a senior engineer…" \
+  --memory-ns eng
+```
+
+`list` shows all identities; pass `--repos a,b` and `--tools Bash,Edit` to constrain repos
+and tools.
+
+**Bind a channel** to an identity, either in Discord:
+
+```
+/bind identity:eng
+```
+
+or from the CLI:
+
+```sh
+node scripts/identity.mjs bind --channel <channelId> --identity eng
+```
+
+**Repo resolution** for a mention follows this order:
+
+1. an explicit `in owner/repo:` prefix in the message,
+2. else the channel/thread identity's `defaultRepo`,
+3. else none (the agent thinks without a repo attached).
+
+**Memory** is namespaced by the identity: each thread's memory lives at
+`<memoryNs>/<thread>/memory.md`, so two identities never share memory even in the same
+server.
+
+> v1 selects an identity by **channel binding** with a single bot. A true
+> `@CustomName`-per-identity experience (each identity its own mentionable bot) would mean
+> running one Discord app per identity — a future enhancement.
 
 ## Security
 

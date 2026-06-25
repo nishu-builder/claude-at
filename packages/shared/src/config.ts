@@ -29,6 +29,8 @@ export const SECRET_IDS = {
 export const AUDIT_BUCKET = process.env.AUDIT_BUCKET ?? "";
 export const MEMORY_BUCKET = process.env.MEMORY_BUCKET ?? "";
 
+export const DEFAULT_IDENTITY_ID = "default";
+
 export function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`missing required env ${name}`);
