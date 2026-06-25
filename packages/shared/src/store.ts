@@ -1,13 +1,16 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, ScanCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { REGION, NAMES } from "./config";
-import type { JobRecord, ThreadRecord, Identity, ChannelBinding } from "./types";
+import type { JobRecord, JobStatus, ThreadRecord, Identity, ChannelBinding } from "./types";
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }), {
   marshallOptions: { removeUndefinedValues: true },
 });
 
 const TABLE = process.env.DDB_TABLE ?? NAMES.table;
+// Sparse GSI on `status`; only JOB# items carry that attribute, so a Query here
+// touches just the jobs in the requested state instead of Scanning the table.
+const STATUS_INDEX = "status-index";
 
 export const jobPk = (id: string): string => `JOB#${id}`;
 export const threadPk = (id: string): string => `THREAD#${id}`;
@@ -102,28 +105,32 @@ export async function putChannelBinding(channelId: string, identityId: string): 
   );
 }
 
-export async function listQueuedJobs(): Promise<JobRecord[]> {
-  const r = await doc.send(
-    new ScanCommand({
-      TableName: TABLE,
-      FilterExpression: "#s = :q AND begins_with(pk, :j)",
-      ExpressionAttributeNames: { "#s": "status" },
-      ExpressionAttributeValues: { ":q": "queued", ":j": "JOB#" },
-    }),
-  );
-  return (r.Items ?? []) as JobRecord[];
+async function listJobsByStatus(status: JobStatus): Promise<JobRecord[]> {
+  const items: JobRecord[] = [];
+  let lastKey: Record<string, unknown> | undefined;
+  do {
+    const r = await doc.send(
+      new QueryCommand({
+        TableName: TABLE,
+        IndexName: STATUS_INDEX,
+        KeyConditionExpression: "#s = :v",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: { ":v": status },
+        ExclusiveStartKey: lastKey,
+      }),
+    );
+    items.push(...((r.Items ?? []) as JobRecord[]));
+    lastKey = r.LastEvaluatedKey;
+  } while (lastKey);
+  return items;
 }
 
-export async function listRunningJobs(): Promise<JobRecord[]> {
-  const r = await doc.send(
-    new ScanCommand({
-      TableName: TABLE,
-      FilterExpression: "#s = :r AND begins_with(pk, :j)",
-      ExpressionAttributeNames: { "#s": "status" },
-      ExpressionAttributeValues: { ":r": "running", ":j": "JOB#" },
-    }),
-  );
-  return (r.Items ?? []) as JobRecord[];
+export function listQueuedJobs(): Promise<JobRecord[]> {
+  return listJobsByStatus("queued");
+}
+
+export function listRunningJobs(): Promise<JobRecord[]> {
+  return listJobsByStatus("running");
 }
 
 // Atomically move a job out of `running` only if it's still running on the

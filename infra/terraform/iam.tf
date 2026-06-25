@@ -43,7 +43,7 @@ data "aws_iam_policy_document" "gateway_task" {
       "dynamodb:DeleteItem",
       "dynamodb:Scan",
     ]
-    resources = [local.table_arn]
+    resources = [local.table_arn, local.table_index_arn]
   }
 
   statement {
@@ -100,7 +100,7 @@ data "aws_iam_policy_document" "worker_task" {
       "dynamodb:DeleteItem",
       "dynamodb:Scan",
     ]
-    resources = [local.table_arn]
+    resources = [local.table_arn, local.table_index_arn]
   }
 
   statement {
