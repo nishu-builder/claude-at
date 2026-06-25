@@ -116,7 +116,7 @@ async function processJob(job: JobRecord): Promise<void> {
   } catch (e) {
     console.error("memory read failed (continuing without memory)", e);
   }
-  const effectivePrompt = memory
+  let effectivePrompt = memory
     ? `You are continuing work in a Discord thread. Accumulated context from earlier in this thread:\n\n<thread_memory>\n${memory}\n</thread_memory>\n\nNow handle this new request:\n${job.prompt}`
     : job.prompt;
 
@@ -167,6 +167,10 @@ async function processJob(job: JobRecord): Promise<void> {
       defaultBranch = (await gitOut(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
     }
 
+    if (repo && ghToken) {
+      effectivePrompt += `\n\n---\nYou have the \`gh\` CLI authenticated for \`${repo}\`. If this request references a GitHub issue or PR (by number or link), read it yourself with \`gh issue view <n>\` / \`gh pr view <n>\` and address it.`;
+    }
+
     let latestActivity = "";
     let lastRendered = "";
 
@@ -189,6 +193,8 @@ async function processJob(job: JobRecord): Promise<void> {
           AWS_REGION: REGION,
           ANTHROPIC_MODEL: MODEL.main,
           ANTHROPIC_SMALL_FAST_MODEL: MODEL.smallFast,
+          ...(ghToken ? { GH_TOKEN: ghToken } : {}),
+          ...(repo ? { GH_REPO: repo } : {}),
         },
         callbacks: {
           onEvent: (evt) => {
