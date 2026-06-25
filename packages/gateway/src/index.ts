@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   Client,
+  EmbedBuilder,
   GatewayIntentBits,
   MessageFlags,
   type ChatInputCommandInteraction,
@@ -24,6 +25,7 @@ import {
   extractRepo,
   getChannelBinding,
   putChannelBinding,
+  getIdentity,
   getIdentityOrDefault,
   putIdentity,
   listIdentities,
@@ -61,6 +63,18 @@ const COMMANDS = [
       { name: "avatar", description: "avatar image URL shown per message", type: 3, required: false },
       { name: "repo", description: "default repo owner/name", type: 3, required: false },
       { name: "memory_ns", description: "memory namespace (defaults to id)", type: 3, required: false },
+    ],
+  },
+  {
+    name: "update-identity",
+    description: "Update fields on an existing claude-at identity",
+    options: [
+      { name: "id", description: "short id of the identity to update", type: 3, required: true },
+      { name: "name", description: "display name", type: 3, required: false },
+      { name: "persona", description: "system prompt / persona", type: 3, required: false },
+      { name: "avatar", description: "avatar image URL shown per message", type: 3, required: false },
+      { name: "repo", description: "default repo owner/name", type: 3, required: false },
+      { name: "memory_ns", description: "memory namespace", type: 3, required: false },
     ],
   },
   { name: "identities", description: "List claude-at identities" },
@@ -256,13 +270,17 @@ async function handleIdentity(interaction: ChatInputCommandInteraction): Promise
     identity.allowedRepos && identity.allowedRepos.length > 0 ? String(identity.allowedRepos.length) : "any";
   const allowedTools =
     identity.allowedTools && identity.allowedTools.length > 0 ? identity.allowedTools.join(", ") : "all";
-  const lines = [
-    `**identity:** ${identity.displayName} (\`${identity.id}\`)`,
-    `**defaultRepo:** ${identity.defaultRepo ?? "—"}`,
-    `**allowedRepos:** ${allowedRepos}`,
-    `**allowedTools:** ${allowedTools}`,
-  ];
-  await interaction.reply({ content: lines.join("\n"), flags: MessageFlags.Ephemeral });
+  const embed = new EmbedBuilder()
+    .setTitle(`${identity.displayName} (${identity.id})`)
+    .addFields(
+      { name: "defaultRepo", value: identity.defaultRepo ?? "—", inline: true },
+      { name: "allowedRepos", value: allowedRepos, inline: true },
+      { name: "allowedTools", value: allowedTools, inline: true },
+      { name: "memory ns", value: identity.memoryNs || "—", inline: true },
+    );
+  if (identity.avatarUrl) embed.setThumbnail(identity.avatarUrl);
+  if (identity.persona) embed.setDescription(identity.persona.slice(0, 4096));
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 async function handleCreateIdentity(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -293,6 +311,60 @@ async function handleCreateIdentity(interaction: ChatInputCommandInteraction): P
   await interaction.reply({ content: lines.join("\n"), flags: MessageFlags.Ephemeral });
 }
 
+async function handleUpdateIdentity(interaction: ChatInputCommandInteraction): Promise<void> {
+  const id = interaction.options.getString("id", true);
+  const existing = await getIdentity(id);
+  if (!existing) {
+    await interaction.reply({
+      content: `No identity \`${id}\` found. Create it with \`/create-identity\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const name = interaction.options.getString("name");
+  const persona = interaction.options.getString("persona");
+  const avatar = interaction.options.getString("avatar");
+  const repo = interaction.options.getString("repo");
+  const memoryNs = interaction.options.getString("memory_ns");
+
+  const changed: string[] = [];
+  const updated: Identity = { ...existing, updatedAt: new Date().toISOString() };
+  if (name !== null) {
+    updated.displayName = name;
+    changed.push("name");
+  }
+  if (persona !== null) {
+    updated.persona = persona;
+    changed.push("persona");
+  }
+  if (avatar !== null) {
+    updated.avatarUrl = avatar || undefined;
+    changed.push("avatar");
+  }
+  if (repo !== null) {
+    updated.defaultRepo = repo || undefined;
+    changed.push("repo");
+  }
+  if (memoryNs !== null) {
+    updated.memoryNs = memoryNs || id;
+    changed.push("memory_ns");
+  }
+
+  if (changed.length === 0) {
+    await interaction.reply({
+      content: "Nothing to update — provide at least one field to change.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await putIdentity(updated);
+  await interaction.reply({
+    content: `✅ Updated **${updated.displayName}** (\`${id}\`): ${changed.join(", ")}`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 async function handleIdentities(interaction: ChatInputCommandInteraction): Promise<void> {
   const all = await listIdentities();
   if (all.length === 0) {
@@ -311,6 +383,7 @@ client.on("interactionCreate", async (interaction) => {
     else if (interaction.commandName === "bind") await handleBind(interaction);
     else if (interaction.commandName === "identity") await handleIdentity(interaction);
     else if (interaction.commandName === "create-identity") await handleCreateIdentity(interaction);
+    else if (interaction.commandName === "update-identity") await handleUpdateIdentity(interaction);
     else if (interaction.commandName === "identities") await handleIdentities(interaction);
   } catch (err) {
     console.error("interaction error", err);
