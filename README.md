@@ -76,9 +76,9 @@ and [`PLAN.md`](PLAN.md) for the architecture and the phased roadmap.
 
 An **identity** is a reusable agent configuration — **persona** (system prompt) +
 **tools** (allowed tools) + **data** (default repo and allowed repos) + an **isolated
-memory** namespace. Identities are **admin-managed**, mirroring Anthropic's Claude Tag
-model: an admin defines who the agent is, and channels are bound to it. Identities live in
-the same `claude-at` DynamoDB table as jobs and threads.
+memory** namespace + an optional **avatar**. Identities are **admin-managed**, mirroring
+Anthropic's Claude Tag model: an admin defines who the agent is, and channels are bound to
+it. Identities live in the same `claude-at` DynamoDB table as jobs and threads.
 
 The worker applies an identity by injecting its `persona` via `--append-system-prompt`,
 restricting tools via `--allowedTools` when `allowedTools` is set, and namespacing memory
@@ -91,11 +91,19 @@ AWS_PROFILE=sandbox-admin node scripts/identity.mjs create \
   --id eng --name "Eng Claude" \
   --repo nishu-builder/claude-at \
   --persona "You are a senior engineer…" \
+  --avatar https://example.com/eng.png \
   --memory-ns eng
 ```
 
 `list` shows all identities; pass `--repos a,b` and `--tools Bash,Edit` to constrain repos
 and tools.
+
+**Per-identity avatars.** When the channel grants the bot **Manage Webhooks**, the worker
+posts each thread message through a channel webhook carrying the identity's `displayName`
+and `avatarUrl` — so the message *looks like it came from that persona* (custom name +
+profile pic), set **per message**, never rewriting earlier messages. Without that
+permission (or an avatar), it falls back to plain bot messages prefixed with
+`[displayName]`.
 
 **Bind a channel** to an identity, either in Discord:
 
@@ -119,9 +127,10 @@ node scripts/identity.mjs bind --channel <channelId> --identity eng
 `<memoryNs>/<thread>/memory.md`, so two identities never share memory even in the same
 server.
 
-> v1 selects an identity by **channel binding** with a single bot. A true
-> `@CustomName`-per-identity experience (each identity its own mentionable bot) would mean
-> running one Discord app per identity — a future enhancement.
+> v1 selects an identity by **channel binding** with a single bot, and webhooks give each
+> identity its own per-message name + avatar. Making each identity separately
+> **`@CustomName`-mentionable** (rather than sharing one bot mention) would mean running one
+> Discord app per identity — a future enhancement.
 
 ## Security
 
