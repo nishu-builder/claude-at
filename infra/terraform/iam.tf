@@ -33,29 +33,6 @@ resource "aws_iam_role" "gateway_task" {
 
 data "aws_iam_policy_document" "gateway_task" {
   statement {
-    sid       = "RunWorkerTask"
-    effect    = "Allow"
-    actions   = ["ecs:RunTask"]
-    resources = ["arn:aws:ecs:${local.region}:${local.account_id}:task-definition/claude-at-worker:*"]
-  }
-
-  statement {
-    sid     = "PassTaskRoles"
-    effect  = "Allow"
-    actions = ["iam:PassRole"]
-    resources = [
-      aws_iam_role.execution.arn,
-      aws_iam_role.worker_task.arn,
-    ]
-
-    condition {
-      test     = "StringEquals"
-      variable = "iam:PassedToService"
-      values   = ["ecs-tasks.amazonaws.com"]
-    }
-  }
-
-  statement {
     sid    = "DynamoAccess"
     effect = "Allow"
     actions = [
@@ -120,6 +97,7 @@ data "aws_iam_policy_document" "worker_task" {
       "dynamodb:UpdateItem",
       "dynamodb:Query",
       "dynamodb:DeleteItem",
+      "dynamodb:Scan",
     ]
     resources = [local.table_arn]
   }
