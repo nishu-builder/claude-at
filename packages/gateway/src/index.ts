@@ -3,6 +3,7 @@ import {
   Client,
   GatewayIntentBits,
   MessageFlags,
+  PermissionFlagsBits,
   type ChatInputCommandInteraction,
   type Guild,
   type Message,
@@ -48,12 +49,14 @@ const COMMANDS = [
   {
     name: "bind",
     description: "Bind this channel to a claude-at identity",
+    defaultMemberPermissions: PermissionFlagsBits.ManageGuild,
     options: [{ name: "identity", description: "identity id", type: 3, required: true }],
   },
   { name: "identity", description: "Show the identity bound to this channel" },
   {
     name: "create-identity",
     description: "Create or update a claude-at identity",
+    defaultMemberPermissions: PermissionFlagsBits.ManageGuild,
     options: [
       { name: "id", description: "short id, e.g. eng", type: 3, required: true },
       { name: "name", description: "display name", type: 3, required: true },
@@ -234,7 +237,20 @@ async function handleStop(interaction: ChatInputCommandInteraction): Promise<voi
   }
 }
 
+// Backstop for the `defaultMemberPermissions` gate on config-mutating commands:
+// that gate can be overridden per-guild in Discord's integration settings, so we
+// also verify Manage Guild at handle time and reject non-admins ephemerally.
+async function ensureAdmin(interaction: ChatInputCommandInteraction): Promise<boolean> {
+  if (interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return true;
+  await interaction.reply({
+    content: "🚫 Insufficient permissions — this command requires the Manage Server permission.",
+    flags: MessageFlags.Ephemeral,
+  });
+  return false;
+}
+
 async function handleBind(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!(await ensureAdmin(interaction))) return;
   const id = interaction.options.getString("identity", true);
   await putChannelBinding(interaction.channelId, id);
   const idn = await getIdentityOrDefault(id);
@@ -264,6 +280,7 @@ async function handleIdentity(interaction: ChatInputCommandInteraction): Promise
 }
 
 async function handleCreateIdentity(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!(await ensureAdmin(interaction))) return;
   const id = interaction.options.getString("id", true);
   const name = interaction.options.getString("name", true);
   const persona = interaction.options.getString("persona");
