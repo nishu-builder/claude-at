@@ -3,6 +3,7 @@ import {
   Client,
   GatewayIntentBits,
   MessageFlags,
+  PermissionFlagsBits,
   type ChatInputCommandInteraction,
   type Guild,
   type Message,
@@ -48,12 +49,14 @@ const COMMANDS = [
   {
     name: "bind",
     description: "Bind this channel to a claude-at identity",
+    default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
     options: [{ name: "identity", description: "identity id", type: 3, required: true }],
   },
   { name: "identity", description: "Show the identity bound to this channel" },
   {
     name: "create-identity",
     description: "Create or update a claude-at identity",
+    default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
     options: [
       { name: "id", description: "short id, e.g. eng", type: 3, required: true },
       { name: "name", description: "display name", type: 3, required: true },
@@ -234,7 +237,20 @@ async function handleStop(interaction: ChatInputCommandInteraction): Promise<voi
   }
 }
 
+async function requireAdmin(interaction: ChatInputCommandInteraction): Promise<boolean> {
+  const perms = interaction.memberPermissions;
+  if (!perms || !perms.has(PermissionFlagsBits.ManageGuild)) {
+    await interaction.reply({
+      content: "🚫 Insufficient permissions — this command requires the Manage Server permission.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return false;
+  }
+  return true;
+}
+
 async function handleBind(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!(await requireAdmin(interaction))) return;
   const id = interaction.options.getString("identity", true);
   await putChannelBinding(interaction.channelId, id);
   const idn = await getIdentityOrDefault(id);
@@ -264,6 +280,7 @@ async function handleIdentity(interaction: ChatInputCommandInteraction): Promise
 }
 
 async function handleCreateIdentity(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!(await requireAdmin(interaction))) return;
   const id = interaction.options.getString("id", true);
   const name = interaction.options.getString("name", true);
   const persona = interaction.options.getString("persona");
