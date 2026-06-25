@@ -19,6 +19,8 @@ export interface RunClaudeOptions {
   cwd: string;
   resume?: string;
   env?: Record<string, string>;
+  appendSystemPrompt?: string;
+  allowedTools?: string[];
   callbacks?: ClaudeCallbacks;
 }
 
@@ -85,13 +87,18 @@ function handleEvent(evt: unknown, cb: ClaudeCallbacks): ClaudeResult | undefine
 
 export function runClaude(opts: RunClaudeOptions): Promise<ClaudeResult> {
   const cb = opts.callbacks ?? {};
+  const permArgs =
+    opts.allowedTools && opts.allowedTools.length > 0
+      ? ["--allowedTools", opts.allowedTools.join(",")]
+      : ["--dangerously-skip-permissions"];
   const args = [
     "-p",
     opts.prompt,
     "--output-format",
     "stream-json",
     "--verbose",
-    "--dangerously-skip-permissions",
+    ...permArgs,
+    ...(opts.appendSystemPrompt ? ["--append-system-prompt", opts.appendSystemPrompt] : []),
     ...(opts.resume ? ["--resume", opts.resume] : []),
   ];
 

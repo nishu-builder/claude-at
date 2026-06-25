@@ -23,6 +23,10 @@ import {
   jobPk,
   threadPk,
   extractRepo,
+  getChannelBinding,
+  putChannelBinding,
+  getIdentityOrDefault,
+  DEFAULT_IDENTITY_ID,
   type JobRecord,
   type ThreadRecord,
 } from "@claude-at/shared";
@@ -41,6 +45,12 @@ const client = new Client({
 const COMMANDS = [
   { name: "status", description: "Show the latest claude-at task in this thread/channel" },
   { name: "stop", description: "Stop the running claude-at task in this thread" },
+  {
+    name: "bind",
+    description: "Bind this channel to a claude-at identity",
+    options: [{ name: "identity", description: "identity id", type: 3, required: true }],
+  },
+  { name: "identity", description: "Show the identity bound to this channel" },
 ];
 
 async function registerCommands(guild: Guild): Promise<void> {
@@ -134,7 +144,19 @@ client.on("messageCreate", async (message: Message) => {
     }
 
     const existingThread = message.channel.isThread() ? await getThread(message.channelId) : undefined;
-    const repo = routedRepo ?? existingThread?.repo ?? undefined;
+
+    const bindChannelId = message.channel.isThread()
+      ? message.channel.parentId ?? message.channelId
+      : message.channelId;
+    const identityId =
+      existingThread?.identityId ?? (await getChannelBinding(bindChannelId))?.identityId ?? DEFAULT_IDENTITY_ID;
+    const identity = await getIdentityOrDefault(identityId);
+
+    const repo = routedRepo ?? existingThread?.repo ?? identity.defaultRepo ?? undefined;
+    if (repo && identity.allowedRepos && identity.allowedRepos.length > 0 && !identity.allowedRepos.includes(repo)) {
+      await message.reply(`🚫 **${identity.displayName}** isn't allowed to work in \`${repo}\`.`);
+      return;
+    }
 
     let threadId: string;
     let thread: SendableChannels;
@@ -162,6 +184,7 @@ client.on("messageCreate", async (message: Message) => {
       channelId: message.channelId,
       threadId,
       userId: message.author.id,
+      identityId: identity.id,
       repo,
       resumeSessionId,
       createdAt: now,
@@ -172,6 +195,7 @@ client.on("messageCreate", async (message: Message) => {
     const threadRec: ThreadRecord = {
       pk: threadPk(threadId),
       threadId,
+      identityId: identity.id,
       repo,
       claudeSessionId: existing?.claudeSessionId,
       lastJobId: jobId,
@@ -235,11 +259,42 @@ async function handleStop(interaction: ChatInputCommandInteraction): Promise<voi
   }
 }
 
+async function handleBind(interaction: ChatInputCommandInteraction): Promise<void> {
+  const id = interaction.options.getString("identity", true);
+  await putChannelBinding(interaction.channelId, id);
+  const idn = await getIdentityOrDefault(id);
+  await interaction.reply({
+    content: `Bound this channel to **${idn.displayName}** (\`${id}\`)`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleIdentity(interaction: ChatInputCommandInteraction): Promise<void> {
+  const bindChannelId = interaction.channel?.isThread?.()
+    ? interaction.channel.parentId ?? interaction.channelId
+    : interaction.channelId;
+  const identityId = (await getChannelBinding(bindChannelId))?.identityId ?? DEFAULT_IDENTITY_ID;
+  const identity = await getIdentityOrDefault(identityId);
+  const allowedRepos =
+    identity.allowedRepos && identity.allowedRepos.length > 0 ? String(identity.allowedRepos.length) : "any";
+  const allowedTools =
+    identity.allowedTools && identity.allowedTools.length > 0 ? identity.allowedTools.join(", ") : "all";
+  const lines = [
+    `**identity:** ${identity.displayName} (\`${identity.id}\`)`,
+    `**defaultRepo:** ${identity.defaultRepo ?? "—"}`,
+    `**allowedRepos:** ${allowedRepos}`,
+    `**allowedTools:** ${allowedTools}`,
+  ];
+  await interaction.reply({ content: lines.join("\n"), flags: MessageFlags.Ephemeral });
+}
+
 client.on("interactionCreate", async (interaction) => {
   try {
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName === "status") await handleStatus(interaction);
     else if (interaction.commandName === "stop") await handleStop(interaction);
+    else if (interaction.commandName === "bind") await handleBind(interaction);
+    else if (interaction.commandName === "identity") await handleIdentity(interaction);
   } catch (err) {
     console.error("interaction error", err);
   }

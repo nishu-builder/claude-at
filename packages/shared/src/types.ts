@@ -9,6 +9,7 @@ export interface JobRecord {
   channelId: string;
   threadId: string;
   userId: string;
+  identityId?: string;
   repo?: string;
   resumeSessionId?: string;
   progressMessageId?: string;
@@ -24,8 +25,29 @@ export interface JobRecord {
 export interface ThreadRecord {
   pk: string;
   threadId: string;
+  identityId?: string;
   repo?: string;
   claudeSessionId?: string;
   lastJobId?: string;
+  updatedAt: string;
+}
+
+export interface Identity {
+  pk: string;
+  id: string;
+  displayName: string;
+  persona: string;
+  defaultRepo?: string;
+  allowedRepos?: string[];
+  allowedTools?: string[];
+  memoryNs: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChannelBinding {
+  pk: string;
+  channelId: string;
+  identityId: string;
   updatedAt: string;
 }
