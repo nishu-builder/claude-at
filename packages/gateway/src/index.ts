@@ -25,9 +25,13 @@ import {
   getChannelBinding,
   putChannelBinding,
   getIdentityOrDefault,
+  putIdentity,
+  listIdentities,
+  identityPk,
   DEFAULT_IDENTITY_ID,
   type JobRecord,
   type ThreadRecord,
+  type Identity,
 } from "@claude-at/shared";
 
 const CLUSTER = requireEnv("CLUSTER");
@@ -47,6 +51,18 @@ const COMMANDS = [
     options: [{ name: "identity", description: "identity id", type: 3, required: true }],
   },
   { name: "identity", description: "Show the identity bound to this channel" },
+  {
+    name: "create-identity",
+    description: "Create or update a claude-at identity",
+    options: [
+      { name: "id", description: "short id, e.g. eng", type: 3, required: true },
+      { name: "name", description: "display name", type: 3, required: true },
+      { name: "persona", description: "system prompt / persona", type: 3, required: false },
+      { name: "repo", description: "default repo owner/name", type: 3, required: false },
+      { name: "memory_ns", description: "memory namespace (defaults to id)", type: 3, required: false },
+    ],
+  },
+  { name: "identities", description: "List claude-at identities" },
 ];
 
 async function registerCommands(guild: Guild): Promise<void> {
@@ -247,6 +263,42 @@ async function handleIdentity(interaction: ChatInputCommandInteraction): Promise
   await interaction.reply({ content: lines.join("\n"), flags: MessageFlags.Ephemeral });
 }
 
+async function handleCreateIdentity(interaction: ChatInputCommandInteraction): Promise<void> {
+  const id = interaction.options.getString("id", true);
+  const name = interaction.options.getString("name", true);
+  const persona = interaction.options.getString("persona");
+  const repo = interaction.options.getString("repo");
+  const memoryNs = interaction.options.getString("memory_ns");
+  const now = new Date().toISOString();
+  const identity: Identity = {
+    pk: identityPk(id),
+    id,
+    displayName: name,
+    persona: persona ?? "",
+    defaultRepo: repo || undefined,
+    memoryNs: memoryNs || id,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await putIdentity(identity);
+  const lines = [
+    `✅ Saved identity **${name}** (\`${id}\`)`,
+    `${identity.defaultRepo ? `repo \`${identity.defaultRepo}\`` : "no default repo"} · memory ns \`${identity.memoryNs}\``,
+    `Bind a channel with \`/bind identity:${id}\``,
+  ];
+  await interaction.reply({ content: lines.join("\n"), flags: MessageFlags.Ephemeral });
+}
+
+async function handleIdentities(interaction: ChatInputCommandInteraction): Promise<void> {
+  const all = await listIdentities();
+  if (all.length === 0) {
+    await interaction.reply({ content: "No identities yet.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const lines = all.map((i) => `• **${i.displayName}** (\`${i.id}\`) → ${i.defaultRepo ?? "—"}`);
+  await interaction.reply({ content: lines.join("\n"), flags: MessageFlags.Ephemeral });
+}
+
 client.on("interactionCreate", async (interaction) => {
   try {
     if (!interaction.isChatInputCommand()) return;
@@ -254,6 +306,8 @@ client.on("interactionCreate", async (interaction) => {
     else if (interaction.commandName === "stop") await handleStop(interaction);
     else if (interaction.commandName === "bind") await handleBind(interaction);
     else if (interaction.commandName === "identity") await handleIdentity(interaction);
+    else if (interaction.commandName === "create-identity") await handleCreateIdentity(interaction);
+    else if (interaction.commandName === "identities") await handleIdentities(interaction);
   } catch (err) {
     console.error("interaction error", err);
   }
