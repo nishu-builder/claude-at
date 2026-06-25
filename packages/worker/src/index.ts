@@ -84,7 +84,10 @@ async function main(): Promise<void> {
   const token = await getSecret(SECRET_IDS.discordBotToken);
   const discord = new Discord(token);
 
-  const msg = await discord.createMessage(job.threadId, "🧠 Thinking…");
+  const introText = job.repo
+    ? `🧠 Working in \`${job.repo}\`…`
+    : "🧠 Thinking… (no repo attached — mention me with `in owner/repo:` to target one)";
+  const msg = await discord.createMessage(job.threadId, introText);
   const progressMessageId = msg.id;
   await updateJob(jobId, { progressMessageId });
 

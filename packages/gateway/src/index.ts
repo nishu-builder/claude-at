@@ -13,7 +13,6 @@ import {
   REGION,
   NAMES,
   SECRET_IDS,
-  DEFAULT_REPO,
   requireEnv,
   getSecret,
   getThread,
@@ -135,7 +134,7 @@ client.on("messageCreate", async (message: Message) => {
     }
 
     const existingThread = message.channel.isThread() ? await getThread(message.channelId) : undefined;
-    const repo = routedRepo ?? existingThread?.repo ?? (DEFAULT_REPO || undefined);
+    const repo = routedRepo ?? existingThread?.repo ?? undefined;
 
     let threadId: string;
     let thread: SendableChannels;

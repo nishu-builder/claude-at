@@ -26,8 +26,6 @@ export const SECRET_IDS = {
   githubAppPrivateKey: "claude-at/github-app-private-key",
 } as const;
 
-export const DEFAULT_REPO = process.env.DEFAULT_REPO ?? "";
-
 export const AUDIT_BUCKET = process.env.AUDIT_BUCKET ?? "";
 export const MEMORY_BUCKET = process.env.MEMORY_BUCKET ?? "";
 
