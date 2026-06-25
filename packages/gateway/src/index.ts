@@ -108,6 +108,15 @@ function stripMention(content: string, botId: string): string {
   return content.replaceAll(`<@${botId}>`, "").replaceAll(`<@!${botId}>`, "").trim();
 }
 
+function describeActiveJob(job: JobRecord): string {
+  const startedMs = Date.parse(job.createdAt);
+  const secs = Number.isFinite(startedMs) ? Math.max(0, Math.round((Date.now() - startedMs) / 1000)) : undefined;
+  const ago = secs === undefined ? "" : secs < 90 ? ` (${secs}s in)` : ` (${Math.round(secs / 60)}m in)`;
+  const what = job.prompt.length > 120 ? `${job.prompt.slice(0, 120)}…` : job.prompt;
+  const state = job.status === "queued" ? "Queued" : "Still working";
+  return `⏳ ${state} on the current task${ago}: "${what}". I'll post the result here when it's done — no need to re-send.`;
+}
+
 client.on("messageCreate", async (message: Message) => {
   let jobId: string | undefined;
   try {
@@ -118,12 +127,24 @@ client.on("messageCreate", async (message: Message) => {
     const botId = client.user?.id;
     if (!botId) return;
 
-    const inOwnedThread = message.channel.isThread() && (await getThread(message.channelId)) !== undefined;
+    const existingThread = message.channel.isThread() ? await getThread(message.channelId) : undefined;
+    const inOwnedThread = existingThread !== undefined;
     const mentioned =
       message.mentions.users.has(botId) ||
       message.content.includes(`<@${botId}>`) ||
       message.content.includes(`<@!${botId}>`);
     if (!mentioned && !inOwnedThread) return;
+
+    // A task is already in flight for this thread: report its status instead of
+    // spawning a second, context-less job that would race on the thread's memory
+    // file and PR branch. (Genuine new instructions can wait for it to finish.)
+    if (existingThread?.lastJobId) {
+      const active = await getJob(existingThread.lastJobId);
+      if (active && (active.status === "queued" || active.status === "running")) {
+        await message.reply(describeActiveJob(active));
+        return;
+      }
+    }
 
     const prompt = stripMention(message.content, botId);
     if (!prompt) {
@@ -136,8 +157,6 @@ client.on("messageCreate", async (message: Message) => {
       await message.reply("What would you like me to do? Mention me with a task.");
       return;
     }
-
-    const existingThread = message.channel.isThread() ? await getThread(message.channelId) : undefined;
 
     const bindChannelId = message.channel.isThread()
       ? message.channel.parentId ?? message.channelId
