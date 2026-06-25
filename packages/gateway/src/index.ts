@@ -8,10 +8,9 @@ import {
   type Message,
   type SendableChannels,
 } from "discord.js";
-import { ECSClient, RunTaskCommand, StopTaskCommand } from "@aws-sdk/client-ecs";
+import { ECSClient, StopTaskCommand } from "@aws-sdk/client-ecs";
 import {
   REGION,
-  NAMES,
   SECRET_IDS,
   requireEnv,
   getSecret,
@@ -32,9 +31,6 @@ import {
 } from "@claude-at/shared";
 
 const CLUSTER = requireEnv("CLUSTER");
-const WORKER_TASKDEF = requireEnv("WORKER_TASKDEF");
-const WORKER_SUBNETS = requireEnv("WORKER_SUBNETS");
-const WORKER_SECURITY_GROUP = requireEnv("WORKER_SECURITY_GROUP");
 
 const ecs = new ECSClient({ region: REGION });
 
@@ -79,39 +75,6 @@ client.on("guildCreate", (guild: Guild) => {
 
 function stripMention(content: string, botId: string): string {
   return content.replaceAll(`<@${botId}>`, "").replaceAll(`<@!${botId}>`, "").trim();
-}
-
-async function launchWorker(jobId: string): Promise<string | undefined> {
-  const run = await ecs.send(
-    new RunTaskCommand({
-      cluster: CLUSTER,
-      taskDefinition: WORKER_TASKDEF,
-      launchType: "FARGATE",
-      count: 1,
-      networkConfiguration: {
-        awsvpcConfiguration: {
-          subnets: WORKER_SUBNETS.split(","),
-          securityGroups: [WORKER_SECURITY_GROUP],
-          assignPublicIp: "ENABLED",
-        },
-      },
-      overrides: {
-        containerOverrides: [
-          {
-            name: NAMES.workerContainer,
-            environment: [
-              { name: "JOB_ID", value: jobId },
-              { name: "DDB_TABLE", value: process.env.DDB_TABLE ?? NAMES.table },
-            ],
-          },
-        ],
-      },
-    }),
-  );
-  if (run.failures && run.failures.length > 0) {
-    throw new Error(`RunTask failures: ${JSON.stringify(run.failures)}`);
-  }
-  return run.tasks?.[0]?.taskArn;
 }
 
 client.on("messageCreate", async (message: Message) => {
@@ -204,11 +167,7 @@ client.on("messageCreate", async (message: Message) => {
     await putThread(threadRec);
     console.log(`[job] ${jobId} repo=${repo ?? "-"} thread=${threadId} prompt="${rest.slice(0, 60)}"`);
 
-    await thread.send("🟡 On it — launching a worker…");
-
-    const taskArn = await launchWorker(jobId);
-    if (taskArn) await updateJob(jobId, { taskArn });
-    console.log(`[launch] job=${jobId} task=${taskArn ?? "none"}`);
+    await thread.send("🟡 On it…");
   } catch (err) {
     if (jobId) {
       try {

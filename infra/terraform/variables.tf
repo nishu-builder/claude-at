@@ -12,3 +12,8 @@ variable "image_tag" {
   type    = string
   default = "latest"
 }
+
+variable "worker_pool_size" {
+  type    = number
+  default = 10
+}

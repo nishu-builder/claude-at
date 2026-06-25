@@ -41,6 +41,29 @@ resource "aws_ecs_task_definition" "worker" {
 }
 
 # ----------------------------------------------------------------------------
+# Worker service (always-on pool, polls DynamoDB for queued jobs)
+# ----------------------------------------------------------------------------
+resource "aws_ecs_service" "worker" {
+  name            = "claude-at-worker"
+  cluster         = aws_ecs_cluster.this.id
+  task_definition = aws_ecs_task_definition.worker.arn
+  desired_count   = var.worker_pool_size
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = local.subnet_ids
+    security_groups  = [aws_security_group.egress.id]
+    assign_public_ip = true
+  }
+
+  depends_on = [
+    aws_iam_role_policy.worker_task,
+    aws_iam_role_policy_attachment.execution_managed,
+    aws_cloudwatch_log_group.worker,
+  ]
+}
+
+# ----------------------------------------------------------------------------
 # Gateway task definition (always-on Discord bot)
 # ----------------------------------------------------------------------------
 resource "aws_ecs_task_definition" "gateway" {
@@ -61,9 +84,6 @@ resource "aws_ecs_task_definition" "gateway" {
         { name = "AWS_REGION", value = local.region },
         { name = "DDB_TABLE", value = aws_dynamodb_table.this.name },
         { name = "CLUSTER", value = aws_ecs_cluster.this.name },
-        { name = "WORKER_TASKDEF", value = "claude-at-worker" },
-        { name = "WORKER_SUBNETS", value = join(",", local.subnet_ids) },
-        { name = "WORKER_SECURITY_GROUP", value = aws_security_group.egress.id },
       ]
       logConfiguration = {
         logDriver = "awslogs"

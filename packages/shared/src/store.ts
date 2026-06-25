@@ -101,3 +101,36 @@ export async function putChannelBinding(channelId: string, identityId: string): 
     }),
   );
 }
+
+export async function listQueuedJobs(): Promise<JobRecord[]> {
+  const r = await doc.send(
+    new ScanCommand({
+      TableName: TABLE,
+      FilterExpression: "#s = :q AND begins_with(pk, :j)",
+      ExpressionAttributeNames: { "#s": "status" },
+      ExpressionAttributeValues: { ":q": "queued", ":j": "JOB#" },
+    }),
+  );
+  return (r.Items ?? []) as JobRecord[];
+}
+
+export async function claimJob(jobId: string, taskArn?: string): Promise<boolean> {
+  try {
+    await doc.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { pk: jobPk(jobId) },
+        UpdateExpression: taskArn ? "SET #s = :r, taskArn = :t, updatedAt = :u" : "SET #s = :r, updatedAt = :u",
+        ConditionExpression: "#s = :q",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: taskArn
+          ? { ":r": "running", ":q": "queued", ":t": taskArn, ":u": new Date().toISOString() }
+          : { ":r": "running", ":q": "queued", ":u": new Date().toISOString() },
+      }),
+    );
+    return true;
+  } catch (e) {
+    if ((e as { name?: string }).name === "ConditionalCheckFailedException") return false;
+    throw e;
+  }
+}

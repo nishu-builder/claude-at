@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,13 +8,14 @@ import {
   SECRET_IDS,
   AUDIT_BUCKET,
   MEMORY_BUCKET,
-  requireEnv,
   getJob,
   updateJob,
   updateThread,
   getSecret,
   getObjectText,
   putObjectText,
+  listQueuedJobs,
+  claimJob,
   Discord,
   installationToken,
   authedCloneUrl,
@@ -22,8 +23,25 @@ import {
   createPullRequest,
   getIdentityOrDefault,
   DEFAULT_IDENTITY_ID,
+  type JobRecord,
 } from "@claude-at/shared";
 import { runClaude, type ClaudeResult } from "./claude";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function currentTaskArn(): Promise<string | undefined> {
+  const uri = process.env.ECS_CONTAINER_METADATA_URI_V4;
+  if (!uri) return undefined;
+  try {
+    const res = await fetch(`${uri}/task`);
+    const data = (await res.json()) as { TaskARN?: string };
+    return data.TaskARN;
+  } catch {
+    return undefined;
+  }
+}
 
 function chunk(text: string, size: number): string[] {
   const out: string[] = [];
@@ -73,14 +91,8 @@ function gitOut(cwd: string, args: string[]): Promise<string> {
   });
 }
 
-async function main(): Promise<void> {
-  const jobId = requireEnv("JOB_ID");
-  const job = await getJob(jobId);
-  if (!job) {
-    console.error(`job ${jobId} not found`);
-    process.exit(1);
-  }
-
+async function processJob(job: JobRecord): Promise<void> {
+  const jobId = job.jobId;
   await updateJob(jobId, { status: "running" });
 
   const identity = await getIdentityOrDefault(job.identityId ?? DEFAULT_IDENTITY_ID);
@@ -142,17 +154,16 @@ async function main(): Promise<void> {
 
   let ghToken: string | undefined;
   let defaultBranch: string | undefined;
+  let tempDir: string | undefined;
 
   try {
-    let cwd: string;
+    const cwd = await mkdtemp(join(tmpdir(), "claude-at-"));
+    tempDir = cwd;
     if (repo) {
       const { owner, name } = parseRepo(repo);
       ghToken = await installationToken(owner, name);
-      cwd = await mkdtemp(join(tmpdir(), "claude-at-"));
       await run("git", ["clone", "--depth", "1", authedCloneUrl(owner, name, ghToken), cwd]);
       defaultBranch = (await gitOut(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
-    } else {
-      cwd = await mkdtemp(join(tmpdir(), "claude-at-"));
     }
 
     let latestActivity = "";
@@ -271,12 +282,53 @@ async function main(): Promise<void> {
       }
     }
 
-    process.exit(0);
+    return;
   } catch (err) {
     await writeAudit({ text: String(err), costUsd: undefined, sessionId: undefined, isError: true });
     await updateJob(jobId, { status: "failed", error: String(err) }).catch(() => {});
     await discord.createMessage(job.threadId, "🔴 Error: " + String(err)).catch(() => {});
-    process.exit(1);
+    return;
+  } finally {
+    if (tempDir) await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function main(): Promise<void> {
+  const jobId = process.env.JOB_ID;
+  if (jobId) {
+    const job = await getJob(jobId);
+    if (!job) {
+      console.error("job not found");
+      process.exit(1);
+    }
+    try {
+      await processJob(job);
+      process.exit(0);
+    } catch (e) {
+      console.error(e);
+      process.exit(1);
+    }
+  }
+
+  console.log("worker pool ready — polling");
+  for (;;) {
+    try {
+      const jobs = await listQueuedJobs();
+      let claimed = false;
+      for (const job of jobs) {
+        const arn = await currentTaskArn();
+        if (await claimJob(job.jobId, arn)) {
+          const fresh = (await getJob(job.jobId)) ?? job;
+          await processJob(fresh);
+          claimed = true;
+          break;
+        }
+      }
+      if (!claimed) await sleep(1500 + Math.floor(Math.random() * 1500));
+    } catch (e) {
+      console.error("pool loop error", e);
+      await sleep(3000);
+    }
   }
 }
 
