@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // Admin CLI for claude-at identities + channel bindings (DynamoDB table "claude-at").
 //
-// An identity = persona (system prompt) + default repo + allowed repos/tools + a
-// memory namespace. The worker injects the persona via --append-system-prompt,
-// namespaces memory by memoryNs, and restricts tools via --allowedTools. The
-// gateway resolves a channel's identity (here or via /bind) and uses its defaultRepo.
+// An identity = persona (system prompt) + default repo + allowed repos/tools +
+// mountable datasets/secrets + a memory namespace. The worker injects the persona
+// via --append-system-prompt, namespaces memory by memoryNs, restricts tools via
+// --allowedTools, syncs datasets into the job's env (CLAUDE_AT_DATA_*), and injects
+// named secrets as env vars. The gateway resolves a channel's identity (here or via
+// /bind) and uses its defaultRepo.
 //
 // Usage:
 //   AWS_PROFILE=sandbox-admin node scripts/identity.mjs create --id <id> --name <displayName> \
-//     [--persona <text>] [--avatar <url>] [--repo <owner/name>] [--repos <a,b>] [--tools <Bash,Edit>] [--memory-ns <ns>]
+//     [--persona <text>] [--avatar <url>] [--repo <owner/name>] [--repos <a,b>] [--tools <Bash,Edit>] \
+//     [--datasets <name=source,...>] [--secrets <ENV=claude-at/data/id,...>] [--memory-ns <ns>]
 //   AWS_PROFILE=sandbox-admin node scripts/identity.mjs list
 //   AWS_PROFILE=sandbox-admin node scripts/identity.mjs bind --channel <channelId> --identity <id>
 
@@ -37,6 +40,10 @@ create options:
   --repo <owner/name>   default repo used when a mention names none
   --repos <a,b,c>       comma-separated allowed repos
   --tools <Bash,Edit>   comma-separated allowed tools (restricts the worker)
+  --datasets <list>     datasets to mount, "name=source" pairs (source = s3://bucket/prefix
+                        or a bare prefix in DATA_BUCKET), e.g. "vmangos=db/vmangos,client=s3://my-bucket/1.12.1"
+  --secrets <list>      secrets to inject, "ENV=secretId" pairs (secretId must start
+                        with "claude-at/data/"), e.g. "DB_PASSWORD=claude-at/data/vmangos-pw"
   --memory-ns <ns>      memory namespace / isolation key (default <id>)
 
 Run with AWS creds, e.g. AWS_PROFILE=sandbox-admin node scripts/identity.mjs ...`;
@@ -68,6 +75,32 @@ function splitList(v) {
     .filter(Boolean);
 }
 
+const DATA_SECRET_PREFIX = "claude-at/data/";
+
+function parsePairs(v, sep, what) {
+  return splitList(v).map((entry) => {
+    const i = entry.indexOf(sep);
+    if (i <= 0) throw new Error(`bad ${what} "${entry}", expected key${sep}value`);
+    return [entry.slice(0, i).trim(), entry.slice(i + 1).trim()];
+  });
+}
+
+function parseDatasets(v) {
+  return parsePairs(v, "=", "dataset").map(([name, source]) => {
+    if (!source) throw new Error(`dataset "${name}" needs a source`);
+    return { name, source };
+  });
+}
+
+function parseSecrets(v) {
+  return parsePairs(v, "=", "secret").map(([env, secretId]) => {
+    if (!secretId.startsWith(DATA_SECRET_PREFIX)) {
+      throw new Error(`secret "${env}" id must start with "${DATA_SECRET_PREFIX}" (got "${secretId}")`);
+    }
+    return { env, secretId };
+  });
+}
+
 async function create(flags) {
   const id = requireFlag(flags, "id");
   const displayName = requireFlag(flags, "name");
@@ -85,6 +118,8 @@ async function create(flags) {
   if (flags.repo) item.defaultRepo = flags.repo;
   if (flags.repos) item.allowedRepos = splitList(flags.repos);
   if (flags.tools) item.allowedTools = splitList(flags.tools);
+  if (flags.datasets) item.datasets = parseDatasets(flags.datasets);
+  if (flags.secrets) item.secrets = parseSecrets(flags.secrets);
 
   await doc.send(new PutCommand({ TableName: TABLE, Item: item }));
   console.log("Stored identity:");
@@ -110,6 +145,8 @@ async function list() {
     defaultRepo: it.defaultRepo ?? "—",
     memoryNs: it.memoryNs ?? "",
     allowedTools: it.allowedTools && it.allowedTools.length > 0 ? it.allowedTools.join(",") : "all",
+    datasets: it.datasets && it.datasets.length > 0 ? it.datasets.map((d) => d.name).join(",") : "—",
+    secrets: it.secrets && it.secrets.length > 0 ? it.secrets.map((s) => s.env).join(",") : "—",
   }));
   console.table(rows);
 }

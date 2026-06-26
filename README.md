@@ -98,6 +98,39 @@ AWS_PROFILE=sandbox-admin node scripts/identity.mjs create \
 `list` shows all identities; pass `--repos a,b` and `--tools Bash,Edit` to constrain repos
 and tools.
 
+## Providing data and services to a job
+
+A task often needs more than its repo — a database to seed, an extracted dataset, a
+licensed asset, or a credential. Two mechanisms cover this, both running **before** the
+agent starts so it works against a ready environment instead of improvising provisioning.
+
+**Repo setup hook.** If the cloned repo contains an executable `.claude-at/setup.sh`, the
+worker runs it (via `bash`, in the clone root) before handing off to the agent. Use it to
+start a local DB, fetch fixtures, or build. Its combined stdout/stderr streams into the
+thread and is captured in the audit log. It is bounded by a 10-minute timeout; a non-zero
+exit (or timeout) **fails the job** rather than handing the agent a broken environment.
+
+**Mountable datasets + secrets.** Attach data and credentials to an identity, scoped by
+IAM:
+
+```sh
+node scripts/identity.mjs create --id wow --name "WoW Claude" \
+  --repo me/vmangos-tools \
+  --datasets "client=1.12.1/extracted,vmangos=db/vmangos-dump" \
+  --secrets "DB_PASSWORD=claude-at/data/vmangos-pw"
+```
+
+- **Datasets** are `name=source` pairs. `source` is an `s3://bucket/prefix` URI or a bare
+  prefix within the `claude-at-data-<account>` bucket (`DATA_BUCKET`). Each is synced into
+  a per-identity dir and exposed to the hook and agent as `CLAUDE_AT_DATA_<NAME>` (with
+  `CLAUDE_AT_DATA_DIR` pointing at the root). The sync is **incremental and cached across
+  pool workers** — only missing or size-changed objects are re-fetched, so a large
+  dataset downloads once per warm worker, not once per job.
+- **Secrets** are `ENV=secretId` pairs injected as environment variables. `secretId` must
+  live under `claude-at/data/` — the worker's IAM grant is confined to that prefix, so an
+  identity can never mount the bot's own Discord/GitHub credentials. Store one with
+  `scripts/store-secret.sh` (or the AWS console) under that prefix first.
+
 **Per-identity avatars.** When the channel grants the bot **Manage Webhooks**, the worker
 posts each thread message through a channel webhook carrying the identity's `displayName`
 and `avatarUrl` — so the message *looks like it came from that persona* (custom name +

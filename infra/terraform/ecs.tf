@@ -28,6 +28,7 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "CLUSTER", value = aws_ecs_cluster.this.name },
         { name = "AUDIT_BUCKET", value = aws_s3_bucket.audit.bucket },
         { name = "MEMORY_BUCKET", value = aws_s3_bucket.memory.bucket },
+        { name = "DATA_BUCKET", value = aws_s3_bucket.data.bucket },
       ]
       logConfiguration = {
         logDriver = "awslogs"

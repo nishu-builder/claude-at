@@ -34,6 +34,21 @@ export interface ThreadRecord {
   updatedAt: string;
 }
 
+// A dataset provisioned into a job's workdir. `source` is an `s3://bucket/prefix`
+// URI or a bare prefix within DATA_BUCKET; its objects are synced to a dir named
+// `name` under the data mount and exposed via `CLAUDE_AT_DATA_<NAME>`.
+export interface DatasetMount {
+  name: string;
+  source: string;
+}
+
+// A named secret injected into the job's environment (the hook + the agent) as
+// `env`. `secretId` must live under the data secret scope (`claude-at/data/*`).
+export interface SecretMount {
+  env: string;
+  secretId: string;
+}
+
 export interface Identity {
   pk: string;
   id: string;
@@ -43,6 +58,8 @@ export interface Identity {
   defaultRepo?: string;
   allowedRepos?: string[];
   allowedTools?: string[];
+  datasets?: DatasetMount[];
+  secrets?: SecretMount[];
   memoryNs: string;
   createdAt: string;
   updatedAt: string;
