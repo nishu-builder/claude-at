@@ -24,9 +24,13 @@ TypeScript monorepo (npm workspaces), run with `tsx` — **no build step**.
    *not* `ecs run-task`; its only ECS call is `StopTask` for `/stop`.)
 3. A **warm Fargate worker pool** polls and claims the job via the `status-index` GSI
    (`listQueuedJobs` → `claimJob`, a conditional write so only one worker wins).
-4. The worker clones the repo (GitHub App token) and runs **headless Claude Code on
-   Bedrock** (`claude -p`, `stream-json`) in the clone.
-5. It streams stages into the thread and, when code changed, opens a **PR**.
+4. The worker clones the repo (GitHub App token), **provisions** identity-scoped datasets
+   (synced from the `claude-at-data` bucket into `CLAUDE_AT_DATA_*` env, cached across pool
+   workers) + secrets (`claude-at/data/*`, injected as env), then runs the repo's
+   `.claude-at/setup.sh` hook if present (`packages/worker/src/provision.ts`) — a non-zero
+   exit fails the job before the agent starts.
+5. It runs **headless Claude Code on Bedrock** (`claude -p`, `stream-json`) in the clone.
+6. It streams stages into the thread and, when code changed, opens a **PR**.
 
 ## DynamoDB (single table `claude-at`)
 

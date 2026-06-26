@@ -28,6 +28,12 @@ export const SECRET_IDS = {
 
 export const AUDIT_BUCKET = process.env.AUDIT_BUCKET ?? "";
 export const MEMORY_BUCKET = process.env.MEMORY_BUCKET ?? "";
+export const DATA_BUCKET = process.env.DATA_BUCKET ?? "";
+
+// Secrets an identity may mount must live under this id prefix so the worker's
+// IAM grant stays scoped (`infra/terraform/iam.tf`). Mounts naming a secret
+// outside it are refused at provision time, not at the IAM boundary.
+export const DATA_SECRET_PREFIX = "claude-at/data/";
 
 export const DEFAULT_IDENTITY_ID = "default";
 

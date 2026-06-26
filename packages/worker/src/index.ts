@@ -28,6 +28,7 @@ import {
   type Webhook,
 } from "@claude-at/shared";
 import { runClaude, type ClaudeResult } from "./claude";
+import { provisionData, runSetupHook } from "./provision";
 import { startReaper } from "./reaper";
 
 function sleep(ms: number): Promise<void> {
@@ -258,6 +259,47 @@ async function processJob(job: JobRecord): Promise<void> {
     let latestActivity = "";
     let lastRendered = "";
 
+    // Provision identity-scoped datasets + secrets, then run the repo's setup
+    // hook — both before the agent starts, so it certifies against real data in
+    // a ready environment instead of improvising provisioning each run.
+    const { env: provisionedEnv, lines: provisionLines } = await provisionData(identity);
+    for (const line of provisionLines) {
+      await poster.create(line).catch(() => {});
+    }
+    const dataVars = Object.keys(provisionedEnv);
+    if (dataVars.length > 0) {
+      effectivePrompt += `\n\n---\nProvisioned data and credentials are available as environment variables: ${dataVars
+        .map((v) => `\`$${v}\``)
+        .join(", ")}. \`CLAUDE_AT_DATA_*\` vars point at synced dataset directories; use them to certify against real data.`;
+    }
+
+    if (repo) {
+      let hookBuf = "";
+      let hookLast = 0;
+      const flushHook = async (): Promise<void> => {
+        if (hookBuf.length === hookLast) return;
+        hookLast = hookBuf.length;
+        latestActivity = `🛠️ setup: ${hookBuf.replace(/\s+/g, " ").trim().slice(-200)}`;
+      };
+      const hookTimer = setInterval(() => void flushHook(), 1500);
+      let setup;
+      try {
+        setup = await runSetupHook(cwd, provisionedEnv, (d) => {
+          hookBuf += d;
+          if (hookBuf.length > 8000) hookBuf = hookBuf.slice(-8000);
+        });
+      } finally {
+        clearInterval(hookTimer);
+      }
+      if (setup.ran) {
+        const tail = setup.output.trim().slice(-1500);
+        const head = setup.ok ? "🛠️ Ran `.claude-at/setup.sh`" : "🔴 `.claude-at/setup.sh` failed";
+        await poster.create(tail ? `${head}\n\`\`\`\n${tail}\n\`\`\`` : head).catch(() => {});
+        events.push({ type: "setup_hook", ok: setup.ok, output: setup.output });
+        if (!setup.ok) throw new Error("setup hook failed; aborting before agent");
+      }
+    }
+
     const interval = setInterval(() => {
       const next = render(latestActivity);
       if (next === lastRendered) return;
@@ -279,6 +321,7 @@ async function processJob(job: JobRecord): Promise<void> {
           ANTHROPIC_SMALL_FAST_MODEL: MODEL.smallFast,
           ...(ghToken ? { GH_TOKEN: ghToken } : {}),
           ...(repo ? { GH_REPO: repo } : {}),
+          ...provisionedEnv,
         },
         callbacks: {
           onEvent: (evt) => {

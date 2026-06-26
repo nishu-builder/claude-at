@@ -114,6 +114,16 @@ data "aws_iam_policy_document" "worker_task" {
     ]
   }
 
+  # Mountable secrets are confined to the `claude-at/data/*` prefix so an
+  # identity can only inject secrets an admin placed there — never the bot's
+  # own Discord/GitHub credentials above.
+  statement {
+    sid       = "DataSecrets"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [local.secret_data_prefix_arn]
+  }
+
   statement {
     sid       = "AuditWriteOnly"
     effect    = "Allow"
@@ -136,6 +146,19 @@ data "aws_iam_policy_document" "worker_task" {
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.memory.arn]
+  }
+
+  # Mountable datasets: list to diff against the on-worker cache, get to fetch.
+  # ListBucket also makes a missing key read as empty rather than 403 (see
+  # CLAUDE.md gotcha).
+  statement {
+    sid    = "DataReadOnly"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket",
+    ]
+    resources = [aws_s3_bucket.data.arn, "${aws_s3_bucket.data.arn}/*"]
   }
 
   # The reaper sweeps for jobs left `running` by dead workers; it needs to ask
