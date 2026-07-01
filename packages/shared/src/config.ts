@@ -1,7 +1,7 @@
 export const REGION = process.env.AWS_REGION ?? "us-east-1";
 
 export const MODEL = {
-  main: "us.anthropic.claude-opus-4-8",
+  main: "us.anthropic.claude-fable-5",
   smallFast: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 } as const;
 
